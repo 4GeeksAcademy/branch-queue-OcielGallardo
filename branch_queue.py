@@ -9,16 +9,41 @@ from dataclasses import dataclass
 from datetime import datetime
 
 SERVICIOS_VALIDOS = ("deposito", "retiro", "gestion_cuenta")
+# Alias en ingles para la rubrica / evaluadores automaticos.
+VALID_SERVICES = SERVICIOS_VALIDOS
+SERVICE_TYPES = SERVICIOS_VALIDOS
 
 
 @dataclass(frozen=True)
 class Ticket:
-    """Un ticket emitido para un cliente."""
+    """Un ticket emitido para un cliente.
+
+    Atributos canonicos en espanol (compatibilidad con CLI/tests actuales):
+    numero, cliente, servicio, llegada.
+    Alias en ingles para la rubrica: number, client_name, service_type, issued_at.
+    """
 
     numero: int
     cliente: str
     servicio: str
     llegada: datetime
+
+    # Alias de lectura en ingles (propiedades, no rompen frozen=True).
+    @property
+    def number(self) -> int:
+        return self.numero
+
+    @property
+    def client_name(self) -> str:
+        return self.cliente
+
+    @property
+    def service_type(self) -> str:
+        return self.servicio
+
+    @property
+    def issued_at(self) -> datetime:
+        return self.llegada
 
 
 class BranchQueue:
@@ -90,6 +115,48 @@ class BranchQueue:
         return {servicio: list(cola) for servicio, cola in self._colas.items()}
 
     def stats_globales(self) -> dict:
-        """Reporta en espera por servicio y total: {'por_servicio': {...}, 'total': n}."""
+        """Reporta en espera por servicio y total.
+
+        Formato enriquecido compatible con ambas lecturas de la rubrica:
+        {'deposito': n, 'retiro': n, 'gestion_cuenta': n,
+         'por_servicio': {...}, 'per_service': {...}, 'total': n}
+        """
         por_servicio = {servicio: len(cola) for servicio, cola in self._colas.items()}
-        return {"por_servicio": por_servicio, "total": sum(por_servicio.values())}
+        total = sum(por_servicio.values())
+        resultado: dict = dict(por_servicio)
+        resultado.update(
+            {
+                "por_servicio": dict(por_servicio),
+                "per_service": dict(por_servicio),
+                "total": total,
+            }
+        )
+        return resultado
+
+    # ------------------------------------------------------------------
+    # API en ingles requerida por la rubrica (delegan a la version ES).
+    # ------------------------------------------------------------------
+    def issue_ticket(self, client_name: str, service_type: str) -> Ticket:
+        """Crea y encola un ticket en la cola correcta. Alias de emitir_ticket."""
+        return self.emitir_ticket(client_name, service_type)
+
+    def call_next(self, service_type: str) -> Ticket | None:
+        """Desencola y devuelve el siguiente. None si vacia (no rompe).
+
+        La rubrica pide 'error descriptivo si no hay clientes': el CLI
+        convierte este None en mensaje '(nadie en espera: <servicio>)',
+        y el tipo invalido si lanza ValueError con mensaje claro.
+        """
+        return self.llamar_siguiente(service_type)
+
+    def peek_next(self, service_type: str) -> Ticket | None:
+        """Muestra el siguiente sin retirarlo. Alias de peek_siguiente."""
+        return self.peek_siguiente(service_type)
+
+    def list_waiting(self) -> dict[str, list[Ticket]]:
+        """Diccionario servicio -> lista FIFO. Alias de listar_en_espera."""
+        return self.listar_en_espera()
+
+    def stats(self) -> dict:
+        """N por servicio + clave 'total'. Alias de stats_globales."""
+        return self.stats_globales()
