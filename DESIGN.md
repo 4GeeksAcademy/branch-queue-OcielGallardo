@@ -9,11 +9,12 @@ Estructura actual: `dict[str, deque[Ticket]]` — una `deque` FIFO por cada serv
 
 `call_next(service_type)` hace:
 
-1. Validar servicio: `O(1)` (lookup en tupla/dict).
+1. Validar servicio: `O(k)`, donde `k` es el numero fijo de servicios.
 2. `cola = self._colas[service_type]`: `O(1)`.
-3. `cola.popleft()`: `O(1)` en `deque`.
+3. `queue.popleft()`: `O(1)` en `deque`.
 
-Costo total: **`O(1)`**, sin recorrer nada.
+Costo total: **`O(1)` en este dominio de tres servicios**, sin recorrer los clientes de
+otros servicios.
 
 Con una unica cola compartida (`deque` o `list` global con todos los tickets mezclados),
 `call_next("deposito")` tendria que buscar el primer ticket de ese servicio saltando los
@@ -45,7 +46,7 @@ Mutacion que debe ocurrir primero: **el `popleft()` (extraccion) debe ser atomic
 respecto a la lectura**. El orden correcto es:
 
 1. Adquirir exclusion mutua de esa cola (ej: `threading.Lock` por servicio).
-2. Comprobar vacia -> retornar `None` (o mensaje) sin mutar.
+2. Comprobar vacia -> lanzar `EmptyQueueError` sin mutar.
 3. `ticket = cola.popleft()` **dentro del lock** — esta es la mutacion critica y debe
    ocurrir antes de devolver/mostrar el ticket a nadie.
 4. Liberar el lock y recien entonces retornar `ticket`.

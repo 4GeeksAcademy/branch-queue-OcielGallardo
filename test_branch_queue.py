@@ -1,99 +1,99 @@
-"""Tests del sistema Branch-Queue. Solo stdlib (unittest)."""
+"""Tests for the BranchQueue service."""
 
 import unittest
 
-from branch_queue import BranchQueue, SERVICIOS_VALIDOS
+from branch_queue import BranchQueue, EmptyQueueError, VALID_SERVICES
 
 
 class TestBranchQueue(unittest.TestCase):
     def setUp(self):
-        self.q = BranchQueue()
+        self.queue = BranchQueue()
 
-    def test_numeracion_global_secuencial(self):
-        t1 = self.q.emitir_ticket("Ana", "deposito")
-        t2 = self.q.emitir_ticket("Luis", "retiro")
-        t3 = self.q.emitir_ticket("Mia", "deposito")
-        self.assertEqual((t1.numero, t2.numero, t3.numero), (1, 2, 3))
+    def test_global_sequential_numbering(self):
+        first = self.queue.issue_ticket("Ana", "deposito")
+        second = self.queue.issue_ticket("Luis", "retiro")
+        third = self.queue.issue_ticket("Mia", "deposito")
+        self.assertEqual((first.number, second.number, third.number), (1, 2, 3))
 
-    def test_registra_datos_del_ticket(self):
-        t = self.q.emitir_ticket("Ana", "deposito")
-        self.assertEqual(t.cliente, "Ana")
-        self.assertEqual(t.servicio, "deposito")
-        self.assertIsNotNone(t.llegada)
+    def test_ticket_stores_client_and_service(self):
+        ticket = self.queue.issue_ticket("Ana", "deposito")
+        self.assertEqual(ticket.client_name, "Ana")
+        self.assertEqual(ticket.service_type, "deposito")
+        self.assertIsNotNone(ticket.issued_at)
 
-    def test_fifo_por_servicio(self):
-        self.q.emitir_ticket("Ana", "deposito")
-        self.q.emitir_ticket("Mia", "deposito")
-        primero = self.q.llamar_siguiente("deposito")
-        segundo = self.q.llamar_siguiente("deposito")
-        self.assertEqual(primero.cliente, "Ana")
-        self.assertEqual(segundo.cliente, "Mia")
+    def test_fifo_per_service(self):
+        self.queue.issue_ticket("Ana", "deposito")
+        self.queue.issue_ticket("Mia", "deposito")
+        first = self.queue.call_next("deposito")
+        second = self.queue.call_next("deposito")
+        self.assertEqual(first.client_name, "Ana")
+        self.assertEqual(second.client_name, "Mia")
 
-    def test_aislamiento_entre_servicios(self):
-        self.q.emitir_ticket("Ana", "deposito")
-        self.q.emitir_ticket("Luis", "retiro")
-        llamado = self.q.llamar_siguiente("deposito")
-        self.assertEqual(llamado.cliente, "Ana")
-        # La otra cola no se toca
-        siguiente_retiro = self.q.peek_siguiente("retiro")
-        self.assertEqual(siguiente_retiro.cliente, "Luis")
+    def test_services_are_isolated(self):
+        self.queue.issue_ticket("Ana", "deposito")
+        self.queue.issue_ticket("Luis", "retiro")
+        called = self.queue.call_next("deposito")
+        self.assertEqual(called.client_name, "Ana")
+        self.assertEqual(self.queue.peek_next("retiro").client_name, "Luis")
 
-    def test_peek_no_consume(self):
-        self.q.emitir_ticket("Ana", "deposito")
-        self.assertEqual(self.q.peek_siguiente("deposito").cliente, "Ana")
-        self.assertEqual(self.q.peek_siguiente("deposito").cliente, "Ana")
-        self.assertEqual(self.q.stats_globales()["total"], 1)
+    def test_peek_does_not_consume(self):
+        self.queue.issue_ticket("Ana", "deposito")
+        self.assertEqual(self.queue.peek_next("deposito").client_name, "Ana")
+        self.assertEqual(self.queue.peek_next("deposito").client_name, "Ana")
+        self.assertEqual(self.queue.stats()["total"], 1)
 
-    def test_cola_vacia_retorna_none(self):
-        self.assertIsNone(self.q.llamar_siguiente("deposito"))
-        self.assertIsNone(self.q.peek_siguiente("retiro"))
+    def test_call_next_raises_descriptive_error_for_empty_queue(self):
+        with self.assertRaisesRegex(EmptyQueueError, "retiro"):
+            self.queue.call_next("retiro")
 
-    def test_listar_en_espera_agrupado_y_ordenado(self):
-        self.q.emitir_ticket("Ana", "deposito")
-        self.q.emitir_ticket("Mia", "deposito")
-        self.q.emitir_ticket("Luis", "retiro")
-        espera = self.q.listar_en_espera()
-        self.assertEqual([t.cliente for t in espera["deposito"]], ["Ana", "Mia"])
-        self.assertEqual([t.cliente for t in espera["retiro"]], ["Luis"])
-        self.assertEqual(espera["gestion_cuenta"], [])
-        self.assertEqual(set(espera.keys()), set(SERVICIOS_VALIDOS))
-
-    def test_stats_globales(self):
-        self.q.emitir_ticket("Ana", "deposito")
-        self.q.emitir_ticket("Mia", "deposito")
-        self.q.emitir_ticket("Luis", "retiro")
-        stats = self.q.stats_globales()
+    def test_list_waiting_is_grouped_and_ordered(self):
+        self.queue.issue_ticket("Ana", "deposito")
+        self.queue.issue_ticket("Mia", "deposito")
+        self.queue.issue_ticket("Luis", "retiro")
+        waiting = self.queue.list_waiting()
         self.assertEqual(
-            stats["por_servicio"],
+            [ticket.client_name for ticket in waiting["deposito"]], ["Ana", "Mia"]
+        )
+        self.assertEqual([ticket.client_name for ticket in waiting["retiro"]], ["Luis"])
+        self.assertEqual(waiting["gestion_cuenta"], [])
+        self.assertEqual(set(waiting), set(VALID_SERVICES))
+
+    def test_stats(self):
+        self.queue.issue_ticket("Ana", "deposito")
+        self.queue.issue_ticket("Mia", "deposito")
+        self.queue.issue_ticket("Luis", "retiro")
+        stats = self.queue.stats()
+        self.assertEqual(
+            stats["per_service"],
             {"deposito": 2, "retiro": 1, "gestion_cuenta": 0},
         )
         self.assertEqual(stats["total"], 3)
 
-    def test_escenario_aceptacion(self):
-        self.q.emitir_ticket("Ana", "deposito")  # #1
-        self.q.emitir_ticket("Luis", "retiro")  # #2
-        self.q.emitir_ticket("Mia", "deposito")  # #3
-        self.assertEqual(self.q.peek_siguiente("deposito").numero, 1)
-        self.assertEqual(self.q.llamar_siguiente("deposito").numero, 1)
-        espera = self.q.listar_en_espera()
-        self.assertEqual([t.numero for t in espera["deposito"]], [3])
-        stats = self.q.stats_globales()
-        self.assertEqual(stats["por_servicio"]["deposito"], 1)
-        self.assertEqual(stats["por_servicio"]["retiro"], 1)
-        self.assertEqual(stats["por_servicio"]["gestion_cuenta"], 0)
+    def test_acceptance_scenario(self):
+        self.queue.issue_ticket("Ana", "deposito")
+        self.queue.issue_ticket("Luis", "retiro")
+        self.queue.issue_ticket("Mia", "deposito")
+        self.assertEqual(self.queue.peek_next("deposito").number, 1)
+        self.assertEqual(self.queue.call_next("deposito").number, 1)
+        waiting = self.queue.list_waiting()
+        self.assertEqual([ticket.number for ticket in waiting["deposito"]], [3])
+        stats = self.queue.stats()
+        self.assertEqual(stats["per_service"]["deposito"], 1)
+        self.assertEqual(stats["per_service"]["retiro"], 1)
+        self.assertEqual(stats["per_service"]["gestion_cuenta"], 0)
         self.assertEqual(stats["total"], 2)
 
-    def test_servicio_invalido(self):
+    def test_invalid_service(self):
         with self.assertRaises(ValueError):
-            self.q.emitir_ticket("Ana", "caja_rapida")
+            self.queue.issue_ticket("Ana", "caja_rapida")
         with self.assertRaises(ValueError):
-            self.q.llamar_siguiente("caja_rapida")
+            self.queue.call_next("caja_rapida")
         with self.assertRaises(ValueError):
-            self.q.peek_siguiente("caja_rapida")
+            self.queue.peek_next("caja_rapida")
 
-    def test_cliente_vacio(self):
+    def test_empty_client_name(self):
         with self.assertRaises(ValueError):
-            self.q.emitir_ticket("   ", "deposito")
+            self.queue.issue_ticket("   ", "deposito")
 
 
 if __name__ == "__main__":
